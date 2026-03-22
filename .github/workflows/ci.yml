@@ -31,4 +31,4 @@ jobs:
         run: cargo build --verbose
 
       - name: Run ZK MockProver Tests
-        run: cargo test -p zk-matrix-join-host --verbose
+        run: cargo test -p zk-matrix-join-server --verbose

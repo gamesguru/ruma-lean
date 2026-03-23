@@ -44,6 +44,15 @@ wasm: ##H Build the WebAssembly light-client Verifier
 	@echo "Compiling WASM bindings..."
 	cd src/wasm-client && wasm-pack build --target web
 
+.PHONY: web-demo
+web-demo: ##H Run a local web server to test the WASM UI
+	@echo "================================================================"
+	@echo " ZK-Matrix WebAssembly Server is starting!"
+	@echo " Please manually open your web browser to:"
+	@echo " http://localhost:8080/demo/index.html"
+	@echo "================================================================"
+	python3 -m http.server 8080
+
 .PHONY: test
 test: ##H Run the ZK Circuit Tests
 	@echo "Running ZK Circuit Tests..."

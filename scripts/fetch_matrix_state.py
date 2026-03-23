@@ -25,7 +25,9 @@ if not ACCESS_TOKEN:
 print(f"Fetching room state for {ROOM_ID}...", file=sys.stderr)
 headers = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
 state_res = requests.get(
-    f"{HOMESERVER}/_matrix/federation/v1/state_ids/{ROOM_ID}", headers=headers
+    # f"{HOMESERVER}/_matrix/federation/v1/state_ids/{ROOM_ID}", headers=headers
+    f"{HOMESERVER}/_matrix/client/v3/rooms/{ROOM_ID}/state",
+    headers=headers,
 )
 
 if state_res.status_code != 200:

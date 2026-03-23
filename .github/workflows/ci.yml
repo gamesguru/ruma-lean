@@ -35,3 +35,9 @@ jobs:
 
       - name: Run ZK MockProver Tests
         run: cargo test -p zk-matrix-join-host --verbose
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Build WASM Web Client
+        run: make wasm

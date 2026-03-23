@@ -32,6 +32,7 @@ state_res = requests.get(
     # f"{HOMESERVER}/_matrix/federation/v1/state_ids/{ROOM_ID}", headers=headers
     f"{HOMESERVER}/_matrix/client/v3/rooms/{ROOM_ID}/state",
     headers=headers,
+    stream=True,
     timeout=30,
 )
 
@@ -39,11 +40,32 @@ if state_res.status_code != 200:
     print(f"Failed to fetch state: {state_res.text}", file=sys.stderr)
     sys.exit(1)
 
-state_events = state_res.json()
+total_size = int(state_res.headers.get("content-length", 0))
+downloaded = 0
+chunks = []
+
+print("Streaming state payload from Homeserver...", file=sys.stderr)
+for chunk in state_res.iter_content(chunk_size=1024 * 1024):
+    if chunk:
+        chunks.append(chunk)
+        downloaded += len(chunk)
+        mb = downloaded / (1024 * 1024)
+        if total_size > 0:
+            percent = (downloaded / total_size) * 100
+            print(
+                f"\rDownloaded {mb:.2f} MB ({percent:.1f}%)...", end="", file=sys.stderr
+            )
+        else:
+            print(f"\rDownloaded {mb:.2f} MB...", end="", file=sys.stderr)
+
+print("\nParsing massive JSON payload into RAM...", file=sys.stderr)
+raw_bytes = b"".join(chunks)
+state_events = json.loads(raw_bytes.decode("utf-8"))
+
 with open("res/real_matrix_state.json", "w", encoding="utf-8") as f:
-    json.dump(state_events, f, indent=2)
+    f.write(raw_bytes.decode("utf-8"))
 
 print(
-    f"\nSuccess! Saved {len(state_events)} real state events to res/real_matrix_state.json",
+    f"\nSuccess! Saved {len(state_events)} real state events",
     file=sys.stderr,
 )

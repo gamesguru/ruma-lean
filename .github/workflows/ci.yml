@@ -27,8 +27,11 @@ jobs:
       - name: Run Clippy (Linter)
         run: cargo clippy -- -D warnings
 
+      - name: Install Protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
       - name: Build
         run: cargo build --verbose
 
       - name: Run ZK MockProver Tests
-        run: cargo test -p zk-matrix-join-server --verbose
+        run: cargo test -p zk-matrix-join-host --verbose

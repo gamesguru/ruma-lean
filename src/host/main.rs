@@ -146,9 +146,9 @@ fn main() {
             let event_type: TimelineEventType =
                 serde_json::from_value(ev["type"].clone()).expect("missing type");
             let prev_events: Vec<OwnedEventId> =
-                serde_json::from_value(ev["prev_events"].clone()).expect("missing prev_events");
+                serde_json::from_value(ev["prev_events"].clone()).unwrap_or_default();
             let auth_events: Vec<OwnedEventId> =
-                serde_json::from_value(ev["auth_events"].clone()).expect("missing auth_events");
+                serde_json::from_value(ev["auth_events"].clone()).unwrap_or_default();
 
             GuestEvent {
                 event,
@@ -222,6 +222,11 @@ fn main() {
             "Matrix Resolved State Hash (Journal): {:?}",
             hex::encode(output.resolved_state_hash)
         );
+
+        println!("Saving STARK Proof to res/proof-with-io.json...");
+        proof
+            .save("res/proof-with-io.json")
+            .expect("Failed to save proof file");
     } else {
         println!("Simulating Verifiable Execution for Matrix State Resolution...");
         println!("(Note: This is a full RISC-V simulation of the Ruma algorithm)");

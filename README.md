@@ -157,7 +157,7 @@ cargo test
 
 The SP1 zkVM runs standard RISC-V code. Vulnerabilities in the zkVM itself often rely on manipulating memory via unchecked pointers (e.g., the LambdaClass zero-register exploit requires an arbitrary memory write to address `0`).
 
-To cryptographically neutralize this entire class of VM exploits, the Guest program in this repository strictly bans `unsafe` Rust via the `#![forbid(unsafe_code)]` compiler directive. All event parsing relies on heavily tested, safe data abstractions (like `ruma-state-res` and `ciborium`), ensuring the guest cannot be manipulated into performing unsafe memory operations regardless of the input DAG structure.
+To cryptographically neutralize this entire class of VM exploits, **the entire workspace (Guest, Host, and WASM Verifier)** in this repository strictly bans `unsafe` Rust via the `#![forbid(unsafe_code)]` compiler directive. All event parsing relies on heavily tested, safe data abstractions (like `ruma-state-res` and `ciborium`), ensuring the applications cannot be manipulated into performing unsafe memory operations regardless of the input DAG structure.
 
 ### Post-Quantum Security
 

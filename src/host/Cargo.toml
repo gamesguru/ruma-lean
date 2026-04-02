@@ -17,6 +17,7 @@ ruma-common = { version = "0.17.1", features = ["canonical-json"] }
 ruma-state-res = "0.15.0"
 hex = "0.4"
 ciborium = "0.2.2"
+sp1-verifier = "6.0.2"
 
 [build-dependencies]
 sp1-build = "6.0.2"

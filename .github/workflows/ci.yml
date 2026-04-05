@@ -95,6 +95,39 @@ jobs:
           MATRIX_FIXTURE_PATH: res/real_matrix_state.json
         run: make prove
 
+      - name: Benchmark Matrix Performance (1k Events Comparison)
+        run: |
+          # 1. Create a 1k fixture from real data
+          sudo apt-get install -y jq
+          if [ -f "res/real_matrix_state.json" ]; then
+            jq '.[0:1000]' res/real_matrix_state.json > res/real_1k.json
+          else
+            # Fallback if no real data
+            MATRIX_FIXTURE_PATH=res/ruma_bootstrap_events.json python3 scripts/generate_benchmark_1k.py
+            mv res/benchmark_1k.json res/real_1k.json
+          fi
+
+          # 2. Run Naive
+          echo "Running Naive Benchmark..."
+          NAIVE_OUTPUT=$(MATRIX_FIXTURE_PATH=res/real_1k.json EXECUTE_UNOPTIMIZED=1 cargo run --release --bin zk-matrix-join-host)
+          NAIVE_CYCLES=$(echo "$NAIVE_OUTPUT" | grep "RISC-V CPU Cycles Used:" | awk '{print $NF}')
+
+          # 3. Run Optimized
+          echo "Running Optimized Benchmark..."
+          OPTIMIZED_OUTPUT=$(MATRIX_FIXTURE_PATH=res/real_1k.json cargo run --release --bin zk-matrix-join-host)
+          OPTIMIZED_CYCLES=$(echo "$OPTIMIZED_OUTPUT" | grep "RISC-V CPU Cycles Used:" | awk '{print $NF}')
+
+          # 4. Generate GitHub Job Summary
+          SPEEDUP=$(awk "BEGIN {print $NAIVE_CYCLES / $OPTIMIZED_CYCLES}")
+
+          echo "### 🚀 ZK-Matrix Benchmarks (1,000 Events)" >> $GITHUB_STEP_SUMMARY
+          echo "| Approach | RISC-V Cycles | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Naive (Standard Ruma)** | $NAIVE_CYCLES | \[✓\] Success |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Optimized (Topological)** | $OPTIMIZED_CYCLES | \[✓\] **${SPEEDUP:0:4}x Faster** |" >> $GITHUB_STEP_SUMMARY
+
+          echo "Performance speedup: ${SPEEDUP:0:4}x"
+
       - name: Print Benchmark Narrative
         run: |
           echo "=========================================================="

@@ -77,7 +77,7 @@ test: ##H Run fast Native Resolution tests (<1s)
 .PHONY: test-zk
 test-zk: ##H Run the full ZKVM Parity Simulation (Takes several minutes)
 	@echo "Running Deep ZKVM Parity Simulation..."
-	$(CARGO) test -p zk-matrix-join-host -- --ignored --nocapture --test-threads=1
+	RUST_LOG=info RAYON_NUM_THREADS=1 $(CARGO) test --release -p zk-matrix-join-host -- --ignored --nocapture --test-threads=1
 
 .PHONY: setup
 setup: ##H Combined: Fetch real Matrix data and Ruma state resolution fixtures

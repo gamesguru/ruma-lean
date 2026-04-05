@@ -451,6 +451,8 @@ mod tests {
     /// Simulates a successful state resolution with active Ruma Event types.
     #[test]
     fn test_positive_hinted_state_resolution() {
+        sp1_sdk::utils::setup_logger();
+
         // Construct a mock Matrix event to test serialization parity
         let raw_json = serde_json::json!({
             "event_id": "$test:example.com",
@@ -500,19 +502,33 @@ mod tests {
         let mut auth_chain_set = HashSet::new();
         auth_chain_set.insert(event_id);
 
-        let input = DAGMergeInput {
-            room_version: RoomVersionId::V10,
-            state_to_resolve: vec![state_map],
-            auth_chains: vec![auth_chain_set],
-            event_map,
-        };
+        // let input = DAGMergeInput {
+        //     room_version: RoomVersionId::V10,
+        //     state_to_resolve: vec![state_map],
+        //     auth_chains: vec![auth_chain_set],
+        //     event_map,
+        // };
+
+        let mut edges: std::vec::Vec<([u8; 32], [u8; 32])> = std::vec::Vec::new();
+        fn hash_str(s: &str) -> [u8; 32] {
+            use sha2::{Digest, Sha256};
+            let mut h = Sha256::new();
+            h.update(s.as_bytes());
+            h.finalize().into()
+        }
+        for (id, ev) in &event_map {
+            let current_hash = hash_str(id.as_str());
+            for prev in &ev.prev_events {
+                edges.push((current_hash, hash_str(prev.as_str())));
+            }
+            if ev.prev_events.is_empty() {
+                edges.push((current_hash, [0u8; 32]));
+            }
+        }
 
         let mut stdin = SP1Stdin::new();
-        {
-            let mut input_bytes = Vec::new();
-            ciborium::into_writer(&input, &mut input_bytes).expect("cbor failed");
-            stdin.write(&input_bytes);
-        }
+        stdin.write(&edges);
+        stdin.write(&[0u8; 32]); // Dummy hash for positive hinted test
     }
 
     /// Performs a full ZKVM parity check by executing the Guest binary
@@ -522,6 +538,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_state_resolution_parity() {
+        sp1_sdk::utils::setup_logger();
         use sha2::{Digest, Sha256};
 
         let event_id: OwnedEventId = "$1:example.com".to_owned().try_into().unwrap();
@@ -598,12 +615,32 @@ mod tests {
 
         // ZKVM Guest Execution (Simulation)
         let prover_client = ProverClient::builder().cpu().build();
-        let mut stdin = SP1Stdin::new();
-        {
-            let mut input_bytes = Vec::new();
-            ciborium::into_writer(&input, &mut input_bytes).expect("cbor failed");
-            stdin.write(&input_bytes);
+
+        let mut edges: std::vec::Vec<([u8; 32], [u8; 32])> = std::vec::Vec::new();
+        fn hash_str(s: &str) -> [u8; 32] {
+            let mut h = sha2::Sha256::new();
+            h.update(s.as_bytes());
+            h.finalize().into()
         }
+        for (id, ev) in &input.event_map {
+            let current_hash = hash_str(id.as_str());
+            for prev in &ev.prev_events {
+                edges.push((current_hash, hash_str(prev.as_str())));
+            }
+            if ev.prev_events.is_empty() {
+                edges.push((current_hash, [0u8; 32]));
+            }
+        }
+
+        let mut stdin = SP1Stdin::new();
+        stdin.write(&edges);
+        stdin.write(&native_hash);
+
+        // SP1 sometimes requires .setup() to be called to initialize internal ELF JIT caches
+        // before .execute() is run inside a test harness to prevent deadlocks.
+        let _pk = prover_client
+            .setup(sp1_sdk::Elf::Static(ZK_MATRIX_GUEST_ELF))
+            .unwrap();
 
         let (mut public_values, _report) = prover_client
             .execute(sp1_sdk::Elf::Static(ZK_MATRIX_GUEST_ELF), stdin)
@@ -631,7 +668,8 @@ mod tests {
 
         // Load real bootstrap events
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
-        let ruma_path = std::path::Path::new(manifest_dir).join("../../res/ruma_bootstrap_events.json");
+        let ruma_path =
+            std::path::Path::new(manifest_dir).join("../../res/ruma_bootstrap_events.json");
 
         // Gracefully skip this test if the bootstrap fixtures are missing
         // to avoid breaking the fast local development cycle.

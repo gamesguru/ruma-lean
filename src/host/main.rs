@@ -140,7 +140,7 @@ fn main() {
     // The Host does the heavy lifting: resolving the state according to Kahn's topological sort.
     // Here we simulate the result of `ruma_state_res::resolve` mathematically sorting the events.
     // Read the true downloaded Matrix State DAG!
-    let state_file_path = "res/real_5k.json";
+    let state_file_path = "res/real_10k.json";
     let fallback_path = "res/massive_matrix_state.json";
     let ruma_path = "res/ruma_bootstrap_events.json";
 
@@ -400,8 +400,22 @@ fn main() {
         .setup(sp1_sdk::Elf::Static(target_elf))
         .unwrap();
 
-    std::fs::write("res/vk_hash.txt", pk.verifying_key().bytes32())
+    let vk = pk.verifying_key();
+    let vk_bytes = bincode::serialize(vk).expect("Failed to serialize VK");
+    std::fs::write("res/vk.bin", vk_bytes).expect("Failed to write VK bin");
+
+    std::fs::write("res/vk_hash.txt", vk.bytes32())
         .expect("Failed to write Verification Key hash to artifacts");
+
+    // Also write the full resolved state to a file for reference
+    let mut stringified_state_map = BTreeMap::new();
+    for ((event_type, state_key), event_id) in &state_map {
+        let key_str = format!("{}|{}", event_type, state_key);
+        stringified_state_map.insert(key_str, event_id.to_string());
+    }
+    let resolved_state_json = serde_json::to_string_pretty(&stringified_state_map).unwrap();
+    std::fs::write("res/resolved_state.json", resolved_state_json)
+        .expect("Failed to write resolved state JSON");
 
     let mut stdin = SP1Stdin::new();
     if is_unoptimized {

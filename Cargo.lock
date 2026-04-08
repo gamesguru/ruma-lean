@@ -6525,6 +6525,7 @@ dependencies = [
 name = "zk-matrix-join-host"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "ciborium",
  "hex",
  "ruma-common",

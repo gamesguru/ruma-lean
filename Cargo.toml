@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["src/host", "src/guest", "src/guest-unoptimized", "src/wasm-client", "src/topological-prover"]
+members = ["src/host", "src/guest", "src/guest-unoptimized", "src/wasm-client", "src/topological-prover", "ruma-lean"]
 exclude = ["sp1"]
 
 [workspace.package]

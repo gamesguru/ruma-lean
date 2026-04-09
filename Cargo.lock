@@ -3600,6 +3600,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "ruma-lean"
+version = "0.1.0"
+
+[[package]]
 name = "ruma-macros"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6530,6 +6534,7 @@ dependencies = [
  "hex",
  "ruma-common",
  "ruma-events",
+ "ruma-lean",
  "ruma-state-res",
  "serde",
  "serde_json",

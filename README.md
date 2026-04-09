@@ -167,6 +167,7 @@ You can configure the type of proof generated using the `SP1_PROVE_MODE` environ
 - `groth16`: Engages the recursive Groth16 Wrapper circuit, generating a SNARK suitable for in-browser WASM verification.
 
 Example usage:
+
 ```bash
 SP1_PROVE=1 SP1_PROVE_MODE=compressed cargo run --bin zk-matrix-join-host
 ```

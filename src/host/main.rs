@@ -23,41 +23,13 @@ pub const ZK_MATRIX_GUEST_UNOPTIMIZED_ELF: &[u8] =
     include_bytes!(env!("SP1_ELF_zk-matrix-join-guest-unoptimized"));
 
 // Represents the binary, packed data we send to the guest as a Hint.
-use ruma_common::{
-    CanonicalJsonObject, MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedRoomId, OwnedUserId,
-    RoomId, RoomVersionId, UserId,
-};
+use ruma_common::{CanonicalJsonObject, OwnedEventId, OwnedRoomId, OwnedUserId, RoomVersionId};
 use ruma_events::TimelineEventType;
-use ruma_state_res::{Event, StateMap};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use ruma_lean::{lean_kahn_sort, LeanEvent};
+pub type StateMap<K> = BTreeMap<(ruma_events::StateEventType, String), K>;
 
-fn verify_lean_equivalence(events: &[GuestEvent]) {
-    println!("> [Equivalence] Verifying Lean Reference Implementation vs. Standard Ruma...");
-
-    let mut lean_events = HashMap::new();
-    for event in events {
-        let lean_ev = LeanEvent {
-            event_id: event.event_id.to_string(),
-            power_level: 0, // Simplified for this demo
-            origin_server_ts: event.origin_server_ts().0.into(),
-            prev_events: event.prev_events.iter().map(|id| id.to_string()).collect(),
-        };
-        lean_events.insert(lean_ev.event_id.clone(), lean_ev);
-    }
-
-    let start = std::time::Instant::now();
-    let sorted_ids = lean_kahn_sort(&lean_events);
-    let duration = start.elapsed();
-
-    println!("  [✓] Lean Kahn Sort (Rust) completed in {:?}", duration);
-    println!("  [✓] Implementation matches RumaLean/Kahn.lean formal model.");
-    println!(
-        "  [✓] Processed {} events with zero dependency bloat.",
-        sorted_ids.len()
-    );
-}
+use ruma_lean::LeanEvent;
 
 pub mod raw_value_as_string {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -91,66 +63,25 @@ pub struct GuestEvent {
     pub event_type: TimelineEventType,
     pub prev_events: Vec<OwnedEventId>,
     pub auth_events: Vec<OwnedEventId>,
+    pub public_key: Option<Vec<u8>>,
+    pub signature: Option<Vec<u8>>,
+    pub verified_on_host: bool,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-pub struct DAGMergeInput {
-    pub room_version: RoomVersionId,
-    pub state_to_resolve: Vec<StateMap<OwnedEventId>>,
-    pub auth_chains: Vec<HashSet<OwnedEventId>>,
-    pub event_map: BTreeMap<OwnedEventId, GuestEvent>,
-}
-
-impl Event for GuestEvent {
-    type Id = OwnedEventId;
-
-    fn event_id(&self) -> &Self::Id {
-        &self.event_id
-    }
-
-    fn room_id(&self) -> Option<&RoomId> {
-        Some(&self.room_id)
-    }
-
-    fn sender(&self) -> &UserId {
-        &self.sender
-    }
-
-    fn origin_server_ts(&self) -> MilliSecondsSinceUnixEpoch {
+impl GuestEvent {
+    fn origin_server_ts(&self) -> ruma_common::MilliSecondsSinceUnixEpoch {
         let val = self
             .event
             .get("origin_server_ts")
             .expect("missing origin_server_ts");
         serde_json::from_value(val.clone().into()).expect("invalid origin_server_ts")
     }
+}
 
-    fn event_type(&self) -> &TimelineEventType {
-        &self.event_type
-    }
-
-    fn content(&self) -> &serde_json::value::RawValue {
-        &self.content
-    }
-
-    fn state_key(&self) -> Option<&str> {
-        self.event.get("state_key").and_then(|val| val.as_str())
-    }
-
-    fn prev_events(&self) -> Box<dyn DoubleEndedIterator<Item = &Self::Id> + '_> {
-        Box::new(self.prev_events.iter())
-    }
-
-    fn auth_events(&self) -> Box<dyn DoubleEndedIterator<Item = &Self::Id> + '_> {
-        Box::new(self.auth_events.iter())
-    }
-
-    fn redacts(&self) -> Option<&Self::Id> {
-        None
-    }
-
-    fn rejected(&self) -> bool {
-        false
-    }
+#[derive(Debug, Deserialize, Serialize)]
+pub struct DAGMergeInput {
+    pub room_version: RoomVersionId,
+    pub event_map: BTreeMap<OwnedEventId, GuestEvent>,
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -299,7 +230,135 @@ fn main() {
                 event_type,
                 prev_events,
                 auth_events,
+                public_key: None,
+                signature: None,
+                verified_on_host: false,
             })
+        })
+        .collect();
+
+    // Parallel Public Key Fetching & Signature Verification
+    println!(
+        "> [Security] Parallel querying homeservers for public keys and verifying signatures..."
+    );
+
+    let key_cache_path = format!("{}.keys.json", path);
+    let mut key_cache: HashMap<String, String> = if std::path::Path::new(&key_cache_path).exists() {
+        let content = std::fs::read_to_string(&key_cache_path).unwrap();
+        serde_json::from_str(&content).unwrap_or_default()
+    } else {
+        HashMap::new()
+    };
+
+    // Identify unique servers we need keys for
+    let mut servers_to_query = HashSet::new();
+    for ev in &events {
+        if let Some(signatures) = ev.event.get("signatures").and_then(|s| s.as_object()) {
+            for server in signatures.keys() {
+                if !key_cache.contains_key(server) {
+                    servers_to_query.insert(server.to_string());
+                }
+            }
+        }
+    }
+
+    if !servers_to_query.is_empty() {
+        println!(
+            "  ... Querying {} homeservers for missing public keys...",
+            servers_to_query.len()
+        );
+        use rayon::prelude::*;
+        let new_keys: Vec<(String, String)> = servers_to_query
+            .into_par_iter()
+            .filter_map(|server| {
+                let url = format!("https://{}/_matrix/key/v2/server", server);
+                let client = reqwest::blocking::Client::builder()
+                    .timeout(std::time::Duration::from_secs(5))
+                    .build()
+                    .ok()?;
+
+                let res = client.get(&url).send().ok()?;
+                let json: serde_json::Value = res.json().ok()?;
+
+                // Extract the first Ed25519 key found
+                if let Some(keys) = json.get("verify_keys").and_then(|k| k.as_object()) {
+                    for (key_id, key_info) in keys {
+                        if key_id.starts_with("ed25519:") {
+                            if let Some(key_base64) = key_info.get("key").and_then(|k| k.as_str()) {
+                                // Convert base64 to hex for our simple cache
+                                use base64::Engine;
+                                if let Ok(bytes) =
+                                    base64::engine::general_purpose::STANDARD.decode(key_base64)
+                                {
+                                    return Some((server, hex::encode(bytes)));
+                                }
+                            }
+                        }
+                    }
+                }
+                None
+            })
+            .collect();
+
+        for (server, key) in new_keys {
+            key_cache.insert(server, key);
+        }
+
+        // Persist the updated cache
+        std::fs::write(
+            &key_cache_path,
+            serde_json::to_string_pretty(&key_cache).unwrap(),
+        )
+        .ok();
+    }
+
+    use rayon::prelude::*;
+    let events: Vec<GuestEvent> = events
+        .into_par_iter()
+        .map(|mut ev| {
+            // Try to extract signature from the event
+            if let Some(signatures) = ev.event.get("signatures").and_then(|s| s.as_object()) {
+                for (server, sigs) in signatures {
+                    if let Some(sig_map) = sigs.as_object() {
+                        for (key_id, sig_val) in sig_map {
+                            if key_id.starts_with("ed25519:") {
+                                if let Some(sig_str) = sig_val.as_str() {
+                                    if let Ok(sig_bytes) = hex::decode(sig_str) {
+                                        if sig_bytes.len() == 64 {
+                                            ev.signature = Some(sig_bytes);
+
+                                            // Check if we have the public key in cache
+                                            let server_name = server.to_string();
+                                            if let Some(pk_hex) = key_cache.get(&server_name) {
+                                                if let Ok(pk_bytes) = hex::decode(pk_hex) {
+                                                    if pk_bytes.len() == 32 {
+                                                        ev.public_key = Some(pk_bytes);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Verify signature if we have both
+            if let (Some(pk), Some(sig)) = (&ev.public_key, &ev.signature) {
+                // Host-side verification
+                use ed25519_consensus::{Signature, VerificationKey};
+                if let (Ok(vk), Ok(s)) = (
+                    VerificationKey::try_from(pk.as_slice()),
+                    Signature::try_from(sig.as_slice()),
+                ) {
+                    if vk.verify(&s, ev.event_id.as_bytes()).is_ok() {
+                        ev.verified_on_host = true;
+                    }
+                }
+            }
+            ev
         })
         .collect();
 
@@ -529,8 +588,6 @@ fn main() {
         println!("> Running UNOPTIMIZED Pipeline (Memory-Heavy Graph Resolution)");
         let input = DAGMergeInput {
             room_version: RoomVersionId::V10,
-            state_to_resolve: vec![state_map],
-            auth_chains: vec![auth_chain_set],
             event_map: event_map.clone(),
         };
         let mut input_bytes = Vec::new();

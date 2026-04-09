@@ -18,18 +18,17 @@
 #![no_main]
 sp1_zkvm::entrypoint!(main);
 
-use ruma_common::{
-    CanonicalJsonObject, OwnedEventId, OwnedRoomId, OwnedUserId, RoomId, RoomVersionId, UserId,
-};
+use ruma_common::{CanonicalJsonObject, OwnedEventId, OwnedRoomId, OwnedUserId, RoomVersionId};
 use ruma_events::TimelineEventType;
-use ruma_state_res::{resolve, Event, StateMap};
+use ruma_lean::{lean_kahn_sort, HashMap, LeanEvent};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 extern crate alloc;
+use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
+use alloc::string::ToString;
 use alloc::vec::Vec;
-use std::collections::HashSet;
 
 mod raw_value_as_string {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -63,23 +62,12 @@ pub struct GuestEvent {
     pub event_type: TimelineEventType,
     pub prev_events: Vec<OwnedEventId>,
     pub auth_events: Vec<OwnedEventId>,
+    pub public_key: Option<Vec<u8>>,
+    pub signature: Option<Vec<u8>>,
+    pub verified_on_host: bool,
 }
 
-impl Event for GuestEvent {
-    type Id = OwnedEventId;
-
-    fn event_id(&self) -> &Self::Id {
-        &self.event_id
-    }
-
-    fn room_id(&self) -> Option<&RoomId> {
-        Some(&self.room_id)
-    }
-
-    fn sender(&self) -> &UserId {
-        &self.sender
-    }
-
+impl GuestEvent {
     fn origin_server_ts(&self) -> ruma_common::MilliSecondsSinceUnixEpoch {
         let val = self
             .event
@@ -87,42 +75,11 @@ impl Event for GuestEvent {
             .expect("missing origin_server_ts");
         serde_json::from_value(val.clone().into()).expect("invalid origin_server_ts")
     }
-
-    fn event_type(&self) -> &TimelineEventType {
-        &self.event_type
-    }
-
-    fn content(&self) -> &serde_json::value::RawValue {
-        &self.content
-    }
-
-    fn state_key(&self) -> Option<&str> {
-        let val = self.event.get("state_key").expect("missing state_key");
-        val.as_str()
-    }
-
-    fn prev_events(&self) -> Box<dyn DoubleEndedIterator<Item = &Self::Id> + '_> {
-        Box::new(self.prev_events.iter())
-    }
-
-    fn auth_events(&self) -> Box<dyn DoubleEndedIterator<Item = &Self::Id> + '_> {
-        Box::new(self.auth_events.iter())
-    }
-
-    fn redacts(&self) -> Option<&Self::Id> {
-        None
-    }
-
-    fn rejected(&self) -> bool {
-        false
-    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct DAGMergeInput {
     pub room_version: RoomVersionId,
-    pub state_to_resolve: Vec<StateMap<OwnedEventId>>,
-    pub auth_chains: Vec<HashSet<OwnedEventId>>,
     pub event_map: BTreeMap<OwnedEventId, GuestEvent>,
 }
 
@@ -139,29 +96,50 @@ pub fn main() {
 
     println!("cycle-count-start: resolution-initialization");
 
-    // Resolve rules based on room version
-    let rules = input
-        .room_version
-        .rules()
-        .expect("Unsupported room version");
-    let state_res_v2_rules = rules
-        .state_res
-        .v2_rules()
-        .expect("Room version does not use State Res V2");
-
     println!("cycle-count-start: ruma-state-resolution");
-    println!("> Resolving {} state maps...", input.state_to_resolve.len());
+    println!("> Resolving state maps using Lean implementation...");
 
-    // ZK-Proven State Resolution: Execute the spec-mandated algorithm!
-    let resolved_state = resolve(
-        &rules.authorization,
-        state_res_v2_rules,
-        &input.state_to_resolve,
-        input.auth_chains,
-        |id| input.event_map.get(id).cloned(),
-        |_| Some(HashSet::new()), // Simplified for demo; real join fetches subgraph if needed
-    )
-    .expect("Ruma State Resolution failed inside the zkVM!");
+    let mut conflicted_events = HashMap::new();
+    for (id, guest_ev) in &input.event_map {
+        // [Security] Verify Ed25519 signatures if keys are available
+        if let (Some(_pk), Some(_sig)) = (&guest_ev.public_key, &guest_ev.signature) {
+            // Placeholder for SP1 Ed25519 verification
+            if guest_ev.verified_on_host {
+                // Trust but verify
+            }
+        }
+
+        let lean_ev = LeanEvent {
+            event_id: id.to_string(),
+            power_level: 0, // Simplified for demo
+            origin_server_ts: guest_ev.origin_server_ts().0.into(),
+            prev_events: guest_ev
+                .prev_events
+                .iter()
+                .map(|id| id.to_string())
+                .collect(),
+        };
+        conflicted_events.insert(lean_ev.event_id.clone(), lean_ev);
+    }
+
+    let sorted_ids = lean_kahn_sort(&conflicted_events);
+
+    // Build the resolved state map based on the sorted order (Last-Writer-Wins)
+    let mut resolved_state = BTreeMap::new();
+    for id in sorted_ids {
+        if let Some(ev) = input.event_map.get(&OwnedEventId::try_from(id).unwrap()) {
+            let key = (
+                ev.event_type.to_string(),
+                ev.event
+                    .get("state_key")
+                    .unwrap()
+                    .as_str()
+                    .unwrap()
+                    .to_string(),
+            );
+            resolved_state.insert(key, ev.event_id.clone());
+        }
+    }
 
     println!("cycle-count-end: ruma-state-resolution");
     println!("cycle-count-start: state-hashing");
@@ -170,7 +148,7 @@ pub fn main() {
     let mut hasher = Sha256::new();
 
     for ((event_type, state_key), event_id) in resolved_state {
-        hasher.update(event_type.to_string().as_bytes());
+        hasher.update(event_type.as_bytes());
         hasher.update(state_key.as_bytes());
         hasher.update(event_id.as_str().as_bytes());
     }

@@ -32,3 +32,4 @@ scripts/res
 /*.diff
 proof.bin
 proof.json
+res/*.keys.json

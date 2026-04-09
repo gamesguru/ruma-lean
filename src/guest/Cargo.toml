@@ -10,7 +10,6 @@ test = false
 
 [dependencies]
 sp1-zkvm = "6.0.2"
-ruma-state-res = "0.15.0"
 ruma-events = "0.32.1"
 ruma-common = { version = "0.17.1", features = ["canonical-json"] }
 serde = { version = "1.0", features = ["derive", "alloc"] }

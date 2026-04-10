@@ -1,19 +1,22 @@
-[workspace]
-resolver = "2"
-members = ["src/host", "src/guest", "src/guest-unoptimized", "src/wasm-client", "src/topological-prover", "ruma-lean"]
-exclude = ["sp1"]
-
-[workspace.package]
+[package]
+name = "ruma-lean"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.81"
+authors = ["Shane Jaroch <chown_tee@proton.me>"]
+description = "Formally verified, dependency-free Matrix State Resolution v2 logic."
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/gamesguru/matrix-zk-stark-dag-demo"
+repository = "https://github.com/gamesguru/ruma-zk"
 
-[patch.crates-io]
-sp1-sdk = { path = "sp1/crates/sdk" }
-sp1-verifier = { path = "sp1/crates/verifier" }
-sp1-build = { path = "sp1/crates/build" }
-sp1-zkvm = { path = "sp1/crates/zkvm/entrypoint" }
-sp1-core-executor = { path = "sp1/crates/core/executor" }
-sp1-core-machine = { path = "sp1/crates/core/machine" }
+[dependencies]
+hashbrown = { version = "0.14", optional = true }
+serde = { version = "1.0", features = ["derive"] }
+hex = "0.4"
+serde_json = { version = "1.0", optional = true }
+ed25519-consensus = { version = "2.1", optional = true }
+base64 = "0.21"
+
+[features]
+default = ["std"]
+std = ["serde_json", "ed25519-consensus"]
+alloc = ["hashbrown", "serde_json"]
+zkvm = []

@@ -1,151 +1,28 @@
 ---
-name: Rust ZK-Matrix CI
+name: CI
 
 on:
   push:
-    branches: ["master", "main"]
+    branches: ["main"]
   pull_request:
-    branches: ["master", "main"]
+    branches: ["main"]
 
 env:
-  CARGO_TERM_COLOR: always
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  build-and-test:
+  prove:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
-
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - name: Cache Rust Dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-
-      - name: Cache SP1 Groth16 Setup
-        uses: actions/cache@v4
-        with:
-          path: ~/.sp1/circuits
-          key: sp1-groth16-${{ runner.os }}
-
-      - name: Setup SP1 Toolchain
+      - name: Install elan (Lean Toolchain Manager)
         run: |
-          curl -L https://sp1up.succinct.xyz | bash
-          ~/.sp1/bin/sp1up
-          echo "$HOME/.sp1/bin" >> $GITHUB_PATH
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y
+          echo "$HOME/.elan/bin" >> $GITHUB_PATH
 
-      - name: Install Protoc
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - name: Update specific cache
+        run: make cache
 
-      - name: Print System & Toolchain Diagnostics
-        run: make cpu-info
-
-      - name: Check Formatting
-        run: cargo fmt --all -- --check
-
-      - name: Build
-        run: cargo build
-
-      - name: Run Clippy (Linter)
-        run: cargo clippy -- -D warnings
-
-      - name: Run ZK MockProver Tests
-        run: cargo test -p zk-matrix-join-host
-
-      - name: Fetch Live Matrix DAG (Privacy Preserved)
-        env:
-          MATRIX_TOKEN: ${{ secrets.MATRIX_TOKEN }}
-          MATRIX_HOMESERVER: ${{ secrets.MATRIX_HOMESERVER }}
-          MATRIX_ROOM_ID: ${{ secrets.MATRIX_ROOM_ID }}
-        run: |
-          sudo apt-get install -y python3-requests
-          python3 scripts/fetch_matrix_state.py
-
-      - name: Benchmark (Tiny 5-Event Matrix Graph)
-        id: sp1_benchmark_lite
-        run: make benchmark-lite
-
-      - name: Benchmark (Massive 41k-Event Matrix Graph)
-        id: sp1_benchmark_heavy
-        env:
-          MATRIX_FIXTURE_PATH: res/real_matrix_state.json
-        run: make benchmark
-
-      - name: Generate True STARK Proof (Tiny 5-Event Graph)
-        id: sp1_prove_lite
-        env:
-          SP1_GROTH16: "true"
-        run: make prove-lite
-
-      - name: WebAssembly In-Browser Verification Validation (Node Mock)
-        id: wasm_verification
-        run: cd src/wasm-client && curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh && wasm-pack test --node
-
-      - name: Benchmark Matrix Performance (Multi-Point Comparison)
-        run: |
-          sudo apt-get install -y jq
-          echo "### [!] ZK-Matrix Benchmarks (Scaling Report)" >> $GITHUB_STEP_SUMMARY
-          echo "| DAG Size | Naive (Cycles) | Optimized (Cycles) | Speedup | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "| :--- | :--- | :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-
-          for SIZE in 1000 5000 10000; do
-            echo "Processing $SIZE events..."
-
-            # Create fixture
-            if [ -f "res/real_matrix_state.json" ]; then
-              jq ".[0:$SIZE]" res/real_matrix_state.json > res/real_${SIZE}.json
-            else
-              # Generate synthetic if real data missing in CI environment
-              MATRIX_FIXTURE_PATH=res/real_${SIZE}.json python3 scripts/generate_massive_data.py --count $SIZE
-            fi
-
-            # Run Naive
-            NAIVE_OUTPUT=$(MATRIX_FIXTURE_PATH=res/real_${SIZE}.json EXECUTE_UNOPTIMIZED=1 cargo run --release --bin zk-matrix-join-host)
-            NAIVE_CYCLES=$(echo "$NAIVE_OUTPUT" | grep "RISC-V CPU Cycles Used:" | awk '{print $NF}')
-
-            # Run Optimized
-            OPTIMIZED_OUTPUT=$(MATRIX_FIXTURE_PATH=res/real_${SIZE}.json cargo run --release --bin zk-matrix-join-host)
-            OPTIMIZED_CYCLES=$(echo "$OPTIMIZED_OUTPUT" | grep "RISC-V CPU Cycles Used:" | awk '{print $NF}')
-
-            # Calculate Speedup
-            SPEEDUP=$(awk "BEGIN {print $NAIVE_CYCLES / $OPTIMIZED_CYCLES}")
-
-            echo "| **Industry Standard AIR (Unoptimized)** | $NAIVE_CYCLES | $OPTIMIZED_CYCLES | **${SPEEDUP:0:4}x** | \[✓\] |" >> $GITHUB_STEP_SUMMARY
-          done
-
-      - name: Generate Execution STARK Proof (Massive 41k-Event Graph)
-        id: sp1_prove_heavy
-        env:
-          MATRIX_FIXTURE_PATH: res/real_matrix_state.json
+      - name: Run Prove
         run: make prove
-
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-
-      - name: Build WASM Web Client
-        run: make wasm
-
-      - name: Save Summary for PR Comment
-        if: github.event_name == 'pull_request'
-        run: cp $GITHUB_STEP_SUMMARY pr_comment.md
-
-      - name: Comment PR with Benchmark Results
-        if: github.event_name == 'pull_request'
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          path: pr_comment.md
